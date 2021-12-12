@@ -375,8 +375,8 @@ class App(QApplication):
             if vehicle_in_field:
                 cv2.circle(frame, circle_coords, radius, vehicle.vehicle.color(), cv2.FILLED)
 
-            cv2.putText(frame, text, text_coords, cv2.FONT_HERSHEY_SIMPLEX, 0.5, const.COLOR_BLACK, 4)
-            cv2.putText(frame, text, text_coords, cv2.FONT_HERSHEY_SIMPLEX, 0.5, vehicle.vehicle.color(), 1)
+            cv2.putText(frame, text, text_coords, cv2.FONT_HERSHEY_SIMPLEX, 0.5, const.COLOR_BLACK, 5)
+            cv2.putText(frame, text, text_coords, cv2.FONT_HERSHEY_SIMPLEX, 0.5, const.COLOR_WHITE, 1)
 
         self._last_frame_vehicles = timed_vehicles
 
