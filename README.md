@@ -13,6 +13,12 @@ In this mode, you can see the trace of each vehicle as well as its mask and a ci
 
 ![Normal mode example](./gif/example_debug.gif)
 
+## Usage
+
+1. Setup required modules from `requirements.txt`
+2. Download [weights file](https://github.com/kleach/traffic-analyzer/releases/download/v0.1/weights.h5) to `./data/` folder
+3. Run `main.py`
+
 ## Credits
 
 In this software we use a modified version of [Mask-RCNN](https://github.com/matterport/Mask_RCNN).
