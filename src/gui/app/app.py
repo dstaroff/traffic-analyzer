@@ -218,6 +218,11 @@ class App(QApplication):
         return textbox, layout
 
     def set_capture(self, capture_source: Union[Type[CaptureSource], CaptureSourceImpl]):
+        if self._capture is not None:
+            self._capture.release()
+
+        self._last_frame_vehicles.clear()
+
         self._capture = capture_source
         self._set_frame_size(self._capture.frame_size())
 
@@ -297,94 +302,97 @@ class App(QApplication):
         if self._capture is None:
             return
 
-        self._capture.skip_frames(self._calculate_skip_frames())
+        try:
+            self._capture.skip_frames(self._calculate_skip_frames())
 
-        frame = self._capture.read()
-        vehicles = self._detector.detect(frame)
+            frame = self._capture.read()
+            vehicles = self._detector.detect(frame)
 
-        # Try to guess which car on previous frame corresponds to the detected car on current frame
-        timed_vehicles: List[TimedVehicle] = []
-        if len(vehicles) >= len(self._last_frame_vehicles):
-            # If current count of cars is bigger than previous cars then
-            # we try to make correspondance for all previous cars.
-            # For all the rest cars we handle them as they are new
-            last_frame_vehicles_count = len(self._last_frame_vehicles)
-            for i in range(last_frame_vehicles_count):
-                guessed_vehicle = self._guess_vehicle_on_last_frame(vehicles[i])
-                guessed_vehicle.vehicle = vehicles[i]
-                timed_vehicles.append(guessed_vehicle)
-            for i in range(last_frame_vehicles_count, len(vehicles)):
-                timed_vehicles.append(TimedVehicle(vehicles[i]))
-        else:
-            for vehicle in vehicles:
-                guessed_vehicle = self._guess_vehicle_on_last_frame(vehicle)
-                guessed_vehicle.vehicle = vehicle
-                timed_vehicles.append(guessed_vehicle)
+            # Try to guess which car on previous frame corresponds to the detected car on current frame
+            timed_vehicles: List[TimedVehicle] = []
+            if len(vehicles) >= len(self._last_frame_vehicles):
+                # If current count of cars is bigger than previous cars then
+                # we try to make correspondance for all previous cars.
+                # For all the rest cars we handle them as they are new
+                last_frame_vehicles_count = len(self._last_frame_vehicles)
+                for i in range(last_frame_vehicles_count):
+                    guessed_vehicle = self._guess_vehicle_on_last_frame(vehicles[i])
+                    guessed_vehicle.vehicle = vehicles[i]
+                    timed_vehicles.append(guessed_vehicle)
+                for i in range(last_frame_vehicles_count, len(vehicles)):
+                    timed_vehicles.append(TimedVehicle(vehicles[i]))
+            else:
+                for vehicle in vehicles:
+                    guessed_vehicle = self._guess_vehicle_on_last_frame(vehicle)
+                    guessed_vehicle.vehicle = vehicle
+                    timed_vehicles.append(guessed_vehicle)
 
-        del vehicles
+            del vehicles
 
-        frame = self._draw_measurement_field(frame)
+            frame = self._draw_measurement_field(frame)
 
-        if len(timed_vehicles) > 0:
-            combined_vehicle_mask = self._combine_vehicle_masks(timed_vehicles)
-            if self._debug_mode:
-                frame = self._draw_mask(combined_vehicle_mask, frame, const.CAR_MASK_COLOR)
-            self._traffic_load = self._calculate_traffic_load(combined_vehicle_mask)
-        else:
-            self._traffic_load = 0.0
+            if len(timed_vehicles) > 0:
+                combined_vehicle_mask = self._combine_vehicle_masks(timed_vehicles)
+                if self._debug_mode:
+                    frame = self._draw_mask(combined_vehicle_mask, frame, const.CAR_MASK_COLOR)
+                self._traffic_load = self._calculate_traffic_load(combined_vehicle_mask)
+            else:
+                self._traffic_load = 0.0
 
-        self._update_traffic_load_signal.emit()
+            self._update_traffic_load_signal.emit()
 
-        for vehicle in timed_vehicles:
-            vehicle_in_field = self._is_point_on_field(vehicle.vehicle.centroid())
-            if not vehicle.has_entered_field():
+            for vehicle in timed_vehicles:
+                vehicle_in_field = self._is_point_on_field(vehicle.vehicle.centroid())
+                if not vehicle.has_entered_field():
+                    if vehicle_in_field:
+                        vehicle.field_entered_time = datetime.datetime.now()
+                elif not vehicle.has_exited_field():
+                    if not vehicle_in_field:
+                        vehicle.field_exited_time = datetime.datetime.now()
+
+                if self._debug_mode:
+                    vehicle.trace.append(vehicle.vehicle.centroid())
+
+                    if len(vehicle.trace) >= 2:
+                        for i in range(1, len(vehicle.trace)):
+                            cv2.circle(
+                                    frame,
+                                    (int(vehicle.vehicle.centroid().x), int(vehicle.vehicle.centroid().y)),
+                                    min(self._capture.frame_size().width, self._capture.frame_size().height) // 8,
+                                    const.COLOR_WHITE
+                                    )
+
+                            cv2.line(
+                                    frame,
+                                    (int(vehicle.trace[i - 1].x), int(vehicle.trace[i - 1].y)),
+                                    (int(vehicle.trace[i].x), int(vehicle.trace[i].y)),
+                                    vehicle.vehicle.color()
+                                    )
+
+                text = f'{vehicle.vehicle.caption()}'
+                if vehicle.has_exited_field():
+                    text = f'{text}: {vehicle.speed(int(self._distance_textbox.text())):.0f} km/h'
+
+                circle_coords = (int(vehicle.vehicle.centroid().x), int(vehicle.vehicle.centroid().y))
+                text_coords = (int(vehicle.vehicle.centroid().x) - 2 * radius,
+                               int(vehicle.vehicle.centroid().y) - 2 * radius)
+
+                cv2.circle(frame, circle_coords, radius + 2, const.COLOR_BLACK, cv2.FILLED)
                 if vehicle_in_field:
-                    vehicle.field_entered_time = datetime.datetime.now()
-            elif not vehicle.has_exited_field():
-                if not vehicle_in_field:
-                    vehicle.field_exited_time = datetime.datetime.now()
+                    cv2.circle(frame, circle_coords, radius, vehicle.vehicle.color(), cv2.FILLED)
 
-            if self._debug_mode:
-                vehicle.trace.append(vehicle.vehicle.centroid())
+                cv2.putText(frame, text, text_coords, cv2.FONT_HERSHEY_SIMPLEX, 0.5, const.COLOR_BLACK, 5)
+                cv2.putText(frame, text, text_coords, cv2.FONT_HERSHEY_SIMPLEX, 0.5, const.COLOR_WHITE, 1)
 
-                if len(vehicle.trace) >= 2:
-                    for i in range(1, len(vehicle.trace)):
-                        cv2.circle(
-                                frame,
-                                (int(vehicle.vehicle.centroid().x), int(vehicle.vehicle.centroid().y)),
-                                min(self._capture.frame_size().width, self._capture.frame_size().height) // 8,
-                                const.COLOR_WHITE
-                                )
+            self._last_frame_vehicles = timed_vehicles
 
-                        cv2.line(
-                                frame,
-                                (int(vehicle.trace[i - 1].x), int(vehicle.trace[i - 1].y)),
-                                (int(vehicle.trace[i].x), int(vehicle.trace[i].y)),
-                                vehicle.vehicle.color()
-                                )
+            del timed_vehicles
 
-            text = f'{vehicle.vehicle.caption()}'
-            if vehicle.has_exited_field():
-                text = f'{text}: {vehicle.speed(int(self._distance_textbox.text())):.0f} km/h'
-
-            circle_coords = (int(vehicle.vehicle.centroid().x), int(vehicle.vehicle.centroid().y))
-            text_coords = (int(vehicle.vehicle.centroid().x) - 2 * radius,
-                           int(vehicle.vehicle.centroid().y) - 2 * radius)
-
-            cv2.circle(frame, circle_coords, radius + 2, const.COLOR_BLACK, cv2.FILLED)
-            if vehicle_in_field:
-                cv2.circle(frame, circle_coords, radius, vehicle.vehicle.color(), cv2.FILLED)
-
-            cv2.putText(frame, text, text_coords, cv2.FONT_HERSHEY_SIMPLEX, 0.5, const.COLOR_BLACK, 5)
-            cv2.putText(frame, text, text_coords, cv2.FONT_HERSHEY_SIMPLEX, 0.5, const.COLOR_WHITE, 1)
-
-        self._last_frame_vehicles = timed_vehicles
-
-        del timed_vehicles
-
-        image = qimage2ndarray.array2qimage(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        self._pixmap = QPixmap.fromImage(image)
-        self._update_pixmap_signal.emit()
+            image = qimage2ndarray.array2qimage(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            self._pixmap = QPixmap.fromImage(image)
+            self._update_pixmap_signal.emit()
+        except Exception:
+            pass
 
     def _guess_vehicle_on_last_frame(self, vehicle: VehicleImpl) -> TimedVehicle:
         guessed_vehicle = self._last_frame_vehicles[0]
@@ -478,7 +486,7 @@ class App(QApplication):
 
         if self._last_frame_time is not None:
             time_delta = current_time - self._last_frame_time
-            frames = round(self._capture.fps() * (time_delta.microseconds / 1000) / 1000)
+            frames = round((self._capture.fps() * time_delta.microseconds) / 1_000_000)
 
         self._last_frame_time = current_time
 
