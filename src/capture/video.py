@@ -11,7 +11,7 @@ class Video(CaptureSource):
         super(Video, self).__init__()
 
     def _read(self) -> np.ndarray:
-        if self._cap.get(cv2.CAP_PROP_POS_FRAMES) == self._cap.get(cv2.CAP_PROP_FRAME_COUNT) - 1:
+        if self._cap.get(cv2.CAP_PROP_POS_FRAMES) >= self._cap.get(cv2.CAP_PROP_FRAME_COUNT) - 1:
             self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
         return super(Video, self)._read()
@@ -20,8 +20,5 @@ class Video(CaptureSource):
         if count == 0:
             return
 
-        offset_frame = self._cap.get(cv2.CAP_PROP_POS_FRAMES) + count
-        if offset_frame < self._cap.get(cv2.CAP_PROP_FRAME_COUNT):
-            self._cap.set(cv2.CAP_PROP_POS_FRAMES, offset_frame)
-        else:
-            self._cap.set(cv2.CAP_PROP_POS_FRAMES, offset_frame - self._cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        offset_frame = (self._cap.get(cv2.CAP_PROP_POS_FRAMES) + count) % self._cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        self._cap.set(cv2.CAP_PROP_POS_FRAMES, offset_frame)
